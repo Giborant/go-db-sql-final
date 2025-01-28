@@ -21,11 +21,11 @@ func (s ParcelStore) Add(p Parcel) (int, error) {
 		sql.Named("address", p.Address),
 		sql.Named("created_at", p.CreatedAt))
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при добавлении посылки: %v", err)
+		return 0, fmt.Errorf("ошибка при добавлении посылки: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при получении ID добавленной посылки: %v", err)
+		return 0, fmt.Errorf("ошибка при получении ID добавленной посылки: %w", err)
 	}
 	// верните идентификатор последней добавленной записи
 	return int(id), nil
@@ -40,7 +40,7 @@ func (s ParcelStore) Get(number int) (Parcel, error) {
 	p := Parcel{}
 	err := row.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
 	if err != nil {
-		return p, fmt.Errorf("ошибка при получении информации о посылке: %v", err)
+		return p, fmt.Errorf("ошибка при получении информации о посылке: %w", err)
 	}
 	return p, nil
 }
@@ -51,7 +51,7 @@ func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
 	rows, err := s.db.Query("SELECT number, client, status, address, created_at FROM parcel WHERE client = :client",
 		sql.Named("client", client))
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении информации о посылках клиента: %v", err)
+		return nil, fmt.Errorf("ошибка при получении информации о посылках клиента: %w", err)
 	}
 	defer rows.Close()
 	// заполните срез Parcel данными из таблицы
@@ -62,9 +62,12 @@ func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
 		var p Parcel
 		err := rows.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
 		if err != nil {
-			return nil, fmt.Errorf("ошибка обработки ответа из БД: %v", err)
+			return nil, fmt.Errorf("ошибка обработки ответа из БД: %w", err)
 		}
 		res = append(res, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка обработки ответа из БД: %w", err)
 	}
 
 	return res, nil
@@ -76,7 +79,7 @@ func (s ParcelStore) SetStatus(number int, status string) error {
 		sql.Named("status", status),
 		sql.Named("number", number))
 	if err != nil {
-		return fmt.Errorf("ошибка обновления статуса посылки: %v", err)
+		return fmt.Errorf("ошибка обновления статуса посылки: %w", err)
 	}
 	return nil
 }
@@ -84,19 +87,27 @@ func (s ParcelStore) SetStatus(number int, status string) error {
 func (s ParcelStore) SetAddress(number int, address string) error {
 	// реализуйте обновление адреса в таблице parcel
 	// менять адрес можно только если значение статуса registered
-	p, err := s.Get(number)
-	if err != nil {
-		return err
-	}
-	if p.Status != ParcelStatusRegistered {
-		return fmt.Errorf("невозможно изменить адресс посылки: статус посылки должен быть 'registered', текущий статус: '%s'",
-			p.Status)
-	}
-	_, err = s.db.Exec("UPDATE parcel SET address = :address WHERE number = :number",
+	// p, err := s.Get(number)
+	// if err != nil {
+	// 	return err
+	// }
+	// if p.Status != ParcelStatusRegistered {
+	// 	return fmt.Errorf("невозможно изменить адресс посылки: статус посылки должен быть 'registered', текущий статус: '%s'",
+	// 		p.Status)
+	// }
+	p, err := s.db.Exec("UPDATE parcel SET address = :address WHERE number = :number AND status = :status",
 		sql.Named("address", address),
-		sql.Named("number", number))
+		sql.Named("number", number),
+		sql.Named("status", ParcelStatusRegistered))
 	if err != nil {
-		return fmt.Errorf("ошибка изменения адреса посылки: %v", err)
+		return fmt.Errorf("ошибка изменения адреса посылки: %w", err)
+	}
+	rowsAffected, err := p.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("ошибка изменения адреса посылки: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("невозможно изменить адресс посылки: статус посылки должен быть 'registered'")
 	}
 	return nil
 }
@@ -104,18 +115,26 @@ func (s ParcelStore) SetAddress(number int, address string) error {
 func (s ParcelStore) Delete(number int) error {
 	// реализуйте удаление строки из таблицы parcel
 	// удалять строку можно только если значение статуса registered
-	p, err := s.Get(number)
+	// p, err := s.Get(number)
+	// if err != nil {
+	// return err
+	// }
+	// if p.Status != ParcelStatusRegistered {
+	// return fmt.Errorf("невозможно удалить посылку: статус посылки должен быть 'registered', текущий статус: '%s'",
+	// p.Status)
+	// }
+	p, err := s.db.Exec("DELETE FROM parcel WHERE number = :number and status = :status",
+		sql.Named("number", number),
+		sql.Named("status", ParcelStatusRegistered))
 	if err != nil {
-		return err
+		return fmt.Errorf("ошибка удаления послыки: %w", err)
 	}
-	if p.Status != ParcelStatusRegistered {
-		return fmt.Errorf("невозможно изменить удалить посылку: статус посылки должен быть 'registered', текущий статус: '%s'",
-			p.Status)
-	}
-	_, err = s.db.Exec("DELETE FROM parcel WHERE number = :number",
-		sql.Named("number", number))
+	rowsAffected, err := p.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("ошибка удаления послыки: %v", err)
+		return fmt.Errorf("ошибка удаления послыки: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("невозможно удалить посылку: статус посылки должен быть 'registered'")
 	}
 	return nil
 }
